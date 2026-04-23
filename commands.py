@@ -58,6 +58,9 @@ def _build_parser() -> argparse.ArgumentParser:
     plan_p = sub.add_parser("plan", add_help=True, help="show or toggle plan mode")
     plan_p.add_argument("toggle", nargs="?", help="'on' or 'off'; omit to query")
 
+    verbose_p = sub.add_parser("verbose", add_help=True, help="show or toggle verbose mode")
+    verbose_p.add_argument("toggle", nargs="?", help="'on' or 'off'; omit to query")
+
     help_p = sub.add_parser("help", add_help=True, help="show help")
     help_p.add_argument("topic", nargs="?", help="optional subcommand name")
 
@@ -227,6 +230,20 @@ def _cmd_plan(bridge: CodexBridge, toggle: Optional[str]) -> str:
     return f"Unknown toggle `{toggle}`. Use `/codex plan on` or `/codex plan off`."
 
 
+def _cmd_verbose(bridge: CodexBridge, toggle: Optional[str]) -> str:
+    if toggle is None:
+        state = "on" if bridge.verbose_mode() else "off"
+        return f"Verbose mode is `{state}`."
+    normalized = toggle.strip().lower()
+    if normalized in ("on", "true", "1", "enable", "enabled"):
+        bridge.set_verbose_mode(True)
+        return "Verbose mode `on` — item/completed notifications will be shown."
+    if normalized in ("off", "false", "0", "disable", "disabled"):
+        bridge.set_verbose_mode(False)
+        return "Verbose mode `off` — only turn/completed notifications will be shown."
+    return f"Unknown toggle `{toggle}`. Use `/codex verbose on` or `/codex verbose off`."
+
+
 def _cmd_reply(bridge: CodexBridge, ns: argparse.Namespace) -> str:
     task_id = ns.task_id
     message = " ".join(ns.message).strip() if ns.message else ""
@@ -275,6 +292,9 @@ def handle_slash(raw_args: str) -> str:
 
     if ns.command == "plan":
         return _cmd_plan(bridge, ns.toggle)
+
+    if ns.command == "verbose":
+        return _cmd_verbose(bridge, ns.toggle)
 
     if ns.command == "reply":
         return _cmd_reply(bridge, ns)

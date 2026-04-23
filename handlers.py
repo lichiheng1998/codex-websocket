@@ -47,6 +47,7 @@ class MessageHandler:
         task_map: Dict[str, str],
         ws_send: Callable[[str], Coroutine],
         notify: Callable[["TaskTarget", str], Coroutine],
+        is_verbose: Callable[[], bool] = lambda: False,
     ) -> None:
         self._pending_rpc = pending_rpc
         self._threads = threads
@@ -55,6 +56,7 @@ class MessageHandler:
         self._task_map = task_map
         self._ws_send = ws_send
         self._notify = notify
+        self._is_verbose = is_verbose
 
     # ------------------------------------------------------------------
     # Top-level dispatch
@@ -135,6 +137,8 @@ class MessageHandler:
                 return
 
             case "item/completed":
+                if not self._is_verbose():
+                    return
                 pt = self._threads.get(params.threadId)
                 if pt is not None:
                     asyncio.create_task(self._safe(self._on_item_completed(pt, params)))

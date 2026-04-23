@@ -192,6 +192,7 @@ class CodexBridge:
         self._start_lock = threading.Lock()
         self._handler: Optional[MessageHandler] = None
         self._plan_enabled: bool = False
+        self._verbose_enabled: bool = False
         self._default_model: str = DEFAULT_MODEL
 
     @classmethod
@@ -290,6 +291,7 @@ class CodexBridge:
             task_map=self._task_map,
             ws_send=self._ws_send,
             notify=self._notify,
+            is_verbose=lambda: self._verbose_enabled,
         )
         asyncio.create_task(self._reader_loop())
         init = await self._rpc(
@@ -636,6 +638,14 @@ class CodexBridge:
 
     def plan_mode(self) -> bool:
         return self._plan_enabled
+
+    def set_verbose_mode(self, enabled: bool) -> Result:
+        """Toggle verbose mode: when on, item/completed notifications are shown."""
+        self._verbose_enabled = bool(enabled)
+        return ok(verbose=self._verbose_enabled)
+
+    def verbose_mode(self) -> bool:
+        return self._verbose_enabled
 
     def get_default_model(self) -> str:
         return self._default_model
