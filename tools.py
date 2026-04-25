@@ -34,7 +34,7 @@ def codex_task(args: dict, **kwargs: Any) -> str:
 
     try:
         session_key, target = _get_session_context()
-    except Exception as exc:
+    except (ImportError, AttributeError) as exc:
         return _error(f"hermes runtime unavailable: {exc}")
 
     bridge = CodexBridge.instance()
@@ -76,7 +76,7 @@ def codex_revive(args: dict, **kwargs: Any) -> str:
 
     try:
         session_key, target = _get_session_context()
-    except Exception as exc:
+    except (ImportError, AttributeError) as exc:
         return _error(f"hermes runtime unavailable: {exc}")
 
     bridge = CodexBridge.instance()

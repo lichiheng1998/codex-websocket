@@ -578,6 +578,8 @@ class CodexBridge:
             ),
         )
         if not turn_rpc["ok"]:
+            self._task_map.pop(task_id, None)
+            self._threads.pop(thread_id, None)
             await self._report_failure(target, task_id, "turn/start failed", turn_rpc["error"])
 
     def send_reply(self, task_id: str, message: str) -> Result:
