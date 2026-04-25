@@ -30,6 +30,7 @@ if str(_SCHEMA_DIR) not in sys.path:
 
 # Outbound client→server params (used by bridge when calling _rpc).
 from ClientRequest import (  # noqa: E402
+    ConfigReadParams,
     InitializeParams,
     InitializeCapabilities,
     ModelListParams,
@@ -58,6 +59,7 @@ from ServerNotification import ServerNotification  # noqa: E402
 from ServerRequest import ServerRequest  # noqa: E402
 
 __all__ = [
+    "ConfigReadParams",
     "InitializeParams",
     "InitializeCapabilities",
     "ModelListParams",
