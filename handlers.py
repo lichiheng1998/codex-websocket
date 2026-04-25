@@ -185,7 +185,7 @@ class MessageHandler:
             case "exitedReviewMode":
                 await self._on_exited_review_mode(pt, item)
             case "contextCompaction":
-                await self._notify(pt.target, f"🗜️ `{pt.task_id}` 上下文已压缩")
+                await self._notify(pt.target, f"🗜️ `{pt.task_id}` context compacted")
             case _:
                 logger.debug("codex bridge: item type %r ignored", item_type)
 
@@ -196,13 +196,13 @@ class MessageHandler:
         prefix = f"🤖 `{pt.task_id}`\n\n"
         max_text = MAX_NOTIFY_TEXT - len(prefix)
         if len(text) > max_text:
-            text = text[:max_text] + "\n…(截断)"
+            text = text[:max_text] + "\n…(truncated)"
         await self._notify(pt.target, prefix + text)
 
     async def _on_plan(self, pt: "_PendingThread", item: Any) -> None:
         text = (getattr(item, "text", "") or "").strip()
         if text:
-            await self._notify(pt.target, f"📋 `{pt.task_id}` 计划\n\n{text}")
+            await self._notify(pt.target, f"📋 `{pt.task_id}` plan\n\n{text}")
 
     async def _on_command_execution(self, pt: "_PendingThread", item: Any) -> None:
         cmd = (getattr(item, "command", "") or "").strip()
@@ -218,7 +218,7 @@ class MessageHandler:
         changes = getattr(item, "changes", None) or []
         if not changes:
             return
-        lines = [f"📝 `{pt.task_id}` 文件变更"]
+        lines = [f"📝 `{pt.task_id}` file changes"]
         for c in changes:
             path = getattr(c, "path", None) or "?"
             kind = getattr(c, "kind", None) or "modify"
@@ -230,15 +230,15 @@ class MessageHandler:
     async def _on_web_search(self, pt: "_PendingThread", item: Any) -> None:
         query = (getattr(item, "query", "") or "").strip()
         if query:
-            await self._notify(pt.target, f"🔍 `{pt.task_id}` 搜索：{query}")
+            await self._notify(pt.target, f"🔍 `{pt.task_id}` search: {query}")
 
     async def _on_entered_review_mode(self, pt: "_PendingThread", item: Any) -> None:
         review = (getattr(item, "review", "") or "").strip()
-        await self._notify(pt.target, f"👁️ `{pt.task_id}` 进入 review 模式：{review}")
+        await self._notify(pt.target, f"👁️ `{pt.task_id}` entered review mode: {review}")
 
     async def _on_exited_review_mode(self, pt: "_PendingThread", item: Any) -> None:
         review = (getattr(item, "review", "") or "").strip()
-        msg = f"👁️ `{pt.task_id}` Review 完成"
+        msg = f"👁️ `{pt.task_id}` review complete"
         if review:
             msg += f"\n\n{review}"
         await self._notify(pt.target, msg)
@@ -286,11 +286,11 @@ class MessageHandler:
         target = pt.target if pt else None
         task_id = pt.task_id if pt else "?"
         notify_text = (
-            f"⚠️ Codex 任务 `{task_id}` 请求执行命令：\n"
+            f"⚠️ Codex task `{task_id}` requests to run a command:\n"
             f"```\n{cmd_preview}\n```\n"
-            f"原因：{reason}\n\n"
-            f"批准：`/codex approve {task_id}`\n"
-            f"拒绝：`/codex deny {task_id}`"
+            f"Reason: {reason}\n\n"
+            f"Approve: `/codex approve {task_id}`\n"
+            f"Deny: `/codex deny {task_id}`"
         )
         self._stash_approval(task_id, rpc_id, str(command) or "(codex command)", reason, target, "command")
         await self._notify(target, notify_text)
@@ -308,11 +308,11 @@ class MessageHandler:
         preview = str(change)[:MAX_APPROVAL_CMD_PREVIEW] if change else "(file change)"
 
         notify_text = (
-            f"⚠️ Codex 任务 `{task_id}` 请求修改文件：\n"
+            f"⚠️ Codex task `{task_id}` requests file changes:\n"
             f"```\n{preview}\n```\n"
-            f"原因：{reason}\n\n"
-            f"批准：`/codex approve {task_id}`\n"
-            f"拒绝：`/codex deny {task_id}`"
+            f"Reason: {reason}\n\n"
+            f"Approve: `/codex approve {task_id}`\n"
+            f"Deny: `/codex deny {task_id}`"
         )
         self._stash_approval(task_id, rpc_id, preview, reason, target, "command")
         await self._notify(target, notify_text)
@@ -330,16 +330,16 @@ class MessageHandler:
         net = getattr(perms, "network", None) if perms else None
         parts = []
         if writes:
-            parts.append("写入路径：" + ", ".join(f"`{getattr(p, 'root', p)}`" for p in writes))
+            parts.append("Write paths: " + ", ".join(f"`{getattr(p, 'root', p)}`" for p in writes))
         if net and getattr(net, "enabled", False):
-            parts.append("网络访问")
-        preview = "\n".join(parts) or "(无明细)"
+            parts.append("Network access")
+        preview = "\n".join(parts) or "(no details)"
 
         notify_text = (
-            f"⚠️ Codex 任务 `{task_id}` 请求权限：\n{preview}\n"
-            f"原因：{reason}\n\n"
-            f"批准：`/codex approve {task_id}`\n"
-            f"拒绝：`/codex deny {task_id}`"
+            f"⚠️ Codex task `{task_id}` requests permissions:\n{preview}\n"
+            f"Reason: {reason}\n\n"
+            f"Approve: `/codex approve {task_id}`\n"
+            f"Deny: `/codex deny {task_id}`"
         )
         self._stash_approval(task_id, rpc_id, preview, reason, target, "permissions")
         await self._notify(target, notify_text)
@@ -359,10 +359,10 @@ class MessageHandler:
         if mode == "url":
             url = getattr(elicitation, "url", "") or ""
             notify_text = (
-                f"🔗 `{task_id}` MCP `{server_name}` 需要你访问链接：\n{url}\n"
+                f"🔗 `{task_id}` MCP `{server_name}` needs you to visit a link:\n{url}\n"
                 f"{elicit_msg}\n\n"
-                f"完成后：`/codex approve {task_id}`\n"
-                f"取消：`/codex deny {task_id}`"
+                f"When done: `/codex approve {task_id}`\n"
+                f"Cancel: `/codex deny {task_id}`"
             )
         else:
             schema = getattr(elicitation, "requestedSchema", None) if elicitation else None
@@ -371,10 +371,10 @@ class MessageHandler:
                 ensure_ascii=False,
             )[:MAX_ELICITATION_SCHEMA_PREVIEW]
             notify_text = (
-                f"❓ `{task_id}` MCP `{server_name}` 请求输入：\n{elicit_msg}\n"
-                f"Schema：`{schema_json}`\n\n"
-                f"接受：`/codex approve {task_id}`\n"
-                f"拒绝：`/codex deny {task_id}`"
+                f"❓ `{task_id}` MCP `{server_name}` requests input:\n{elicit_msg}\n"
+                f"Schema: `{schema_json}`\n\n"
+                f"Accept: `/codex approve {task_id}`\n"
+                f"Decline: `/codex deny {task_id}`"
             )
 
         self._stash_approval(
@@ -423,13 +423,13 @@ class MessageHandler:
             questions=questions,
         )
 
-        lines = [f"🤔 Codex 任务 `{pt.task_id}` 需要你回答以下问题："]
+        lines = [f"🤔 Codex task `{pt.task_id}` needs you to answer:"]
         for idx, q in enumerate(questions, 1):
             question_text = getattr(q, "question", "") or ""
             lines.append(f"\n{idx}. {question_text}")
             if getattr(q, "isOther", False):
-                lines.append("   _(接受自由文本回复)_")
-        lines.append(f"\n回复命令：`/codex reply {pt.task_id} <你的答案>`")
+                lines.append("   _(free-text reply accepted)_")
+        lines.append(f"\nReply with: `/codex reply {pt.task_id} <your answer>`")
         await self._notify(pt.target, "\n".join(lines))
 
     async def submit_input_answers(
