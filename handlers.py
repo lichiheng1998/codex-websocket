@@ -436,7 +436,6 @@ class MessageHandler:
 
         self._pending_inputs[pt.task_id] = _PendingInput(
             task_id=pt.task_id,
-            thread_id=thread_id,
             rpc_id=rpc_id,
             questions=questions,
         )

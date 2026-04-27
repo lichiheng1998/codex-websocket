@@ -169,7 +169,6 @@ class _PendingThread:
 @dataclass
 class _PendingInput:
     task_id: str
-    thread_id: str
     rpc_id: Any
     questions: list
 
