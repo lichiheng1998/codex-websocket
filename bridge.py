@@ -36,13 +36,18 @@ from pydantic import BaseModel
 from . import wire
 from .handlers import MessageHandler
 from .notify import notify_user, report_failure
+from .provider import (
+    ProviderInfo,
+    known_ids_from_listing,
+    list_models_for,
+    sync_default_model,
+)
 from .policies import (
     DEFAULT_APPROVAL_POLICY,
     DEFAULT_MODEL,
     DEFAULT_SANDBOX_POLICY,
     LOOP_READY_TIMEOUT,
     PORT_PROBE_TIMEOUT,
-    PROVIDER_HTTP_TIMEOUT,
     RPC_TIMEOUT,
     SHORT_RPC_TIMEOUT,
     SHUTDOWN_TIMEOUT,
@@ -88,12 +93,10 @@ class CodexBridge:
         self._plan_enabled: bool = False
         self._verbose_enabled: bool = False
         self._default_model: str = DEFAULT_MODEL
-        # Provider info read from `config/read` so we can list models from the
-        # provider's own /v1/models endpoint instead of codex's bundled OpenAI
-        # catalog. None until the first successful sync.
-        self._provider_id: Optional[str] = None
-        self._provider_base_url: Optional[str] = None
-        self._provider_env_key: Optional[str] = None
+        # Provider info read from `config/read` so list_models_for can hit
+        # the provider's own /v1/models endpoint instead of codex's bundled
+        # OpenAI catalog. Empty triple until the first successful sync.
+        self._provider: ProviderInfo = ProviderInfo()
 
     @classmethod
     def instance(cls) -> "CodexBridge":
@@ -208,57 +211,15 @@ class CodexBridge:
             raise RuntimeError(f"initialized notification failed: {notified['error']}")
 
     async def _sync_config_from_server(self) -> Result:
-        """Pull effective config from the app-server.
+        """Pull effective config + provider triple from the app-server.
 
-        Reads `config/read` to learn (a) the user's default `model = ...`
-        from config.toml, and (b) the active `model_provider`'s base_url and
-        env_key — needed so `list_models()` can hit the provider's own
-        /v1/models instead of the bundled OpenAI catalog (which is what
-        `model/list` returns regardless of the configured provider).
-
-        Falls back to `model/list` + isDefault for users who haven't set
-        `model = ...` explicitly (e.g. plain OpenAI provider).
+        See ``provider.sync_default_model`` for the strategy. The provider
+        triple is captured even when the model lookup fails — list_models
+        can use the provider's own /models endpoint independently.
         """
-        cfg_rpc = await self._rpc(
-            "config/read", wire.ConfigReadParams(), timeout=RPC_TIMEOUT,
-        )
-        if cfg_rpc["ok"]:
-            config = (cfg_rpc["result"] or {}).get("config") or {}
-            provider_id = (config.get("model_provider") or "").strip() or None
-            self._provider_id = provider_id
-            providers = config.get("model_providers") or {}
-            if provider_id and isinstance(providers, dict):
-                pinfo = providers.get(provider_id) or {}
-                self._provider_base_url = (pinfo.get("base_url") or "").strip() or None
-                self._provider_env_key = (pinfo.get("env_key") or "").strip() or None
-
-            model = (config.get("model") or "").strip()
-            if model:
-                return ok(model=model)
-
-        cursor = None
-        while True:
-            rpc = await self._rpc(
-                "model/list",
-                wire.ModelListParams(cursor=cursor, includeHidden=True),
-                timeout=RPC_TIMEOUT,
-            )
-            if not rpc["ok"]:
-                return rpc
-
-            payload = rpc["result"] or {}
-            for item in payload.get("data") or []:
-                if not isinstance(item, dict) or not item.get("isDefault"):
-                    continue
-                model = (item.get("model") or item.get("id") or "").strip()
-                if model:
-                    return ok(model=model)
-
-            cursor = payload.get("nextCursor")
-            if not cursor:
-                break
-
-        return err("no default model: config.toml has no `model = ...` and model/list returned no isDefault entry")
+        result, provider = await sync_default_model(self._rpc)
+        self._provider = provider
+        return result
 
     def shutdown(self) -> None:
         if self.loop and self.loop.is_running():
@@ -541,30 +502,14 @@ class CodexBridge:
     def get_default_model(self) -> str:
         return self._default_model
 
-    def known_model_ids(self, *, include_hidden: bool = True) -> Result:
-        """Flat set of model identifiers from list_models, considering both
-        the `id` and `model` fields each entry may carry."""
-        listed = self.list_models(include_hidden=include_hidden)
-        if not listed["ok"]:
-            return listed
-        ids: set[str] = set()
-        for item in listed.get("data") or []:
-            if not isinstance(item, dict):
-                continue
-            for key in ("id", "model"):
-                value = str(item.get(key) or "").strip()
-                if value:
-                    ids.add(value)
-        return ok(ids=ids)
-
     def set_default_model(self, model: str) -> Result:
         normalized = (model or "").strip()
         if not normalized:
             return err("model id is required")
 
-        known = self.known_model_ids()
-        if known["ok"]:
-            available = known["ids"]
+        listed = self.list_models(include_hidden=True)
+        if listed["ok"]:
+            available = known_ids_from_listing(listed)
             if available and normalized not in available:
                 logger.warning(
                     "codex bridge: model %r not in provider list; setting anyway",
@@ -573,7 +518,7 @@ class CodexBridge:
         else:
             logger.warning(
                 "codex bridge: list_models failed (%s); setting %r without validation",
-                known.get("error"), normalized,
+                listed.get("error"), normalized,
             )
 
         self._default_model = normalized
@@ -620,92 +565,14 @@ class CodexBridge:
         include_hidden: bool = False,
         limit: Optional[int] = None,
     ) -> Result:
-        """List models for the configured provider.
-
-        Prefers the provider's own /v1/models endpoint (works for LiteLLM,
-        Ollama, LM Studio, etc.) since codex's `model/list` returns its
-        bundled OpenAI catalog regardless of `model_provider` (see TODO in
-        codex-rs/models-manager: cache eligibility doesn't include provider
-        identity). Falls back to `model/list` when the provider didn't come
-        through `config/read` (e.g. plain OpenAI).
-        """
+        """List models for the configured provider — see provider.list_models_for."""
         started = self.ensure_started()
         if not started["ok"]:
             return started
-
-        if self._provider_base_url:
-            direct = self._fetch_provider_models(self._provider_base_url, self._provider_env_key)
-            if direct["ok"]:
-                return direct
-            logger.warning(
-                "codex bridge: provider /v1/models fetch failed (%s); falling back to model/list",
-                direct.get("error"),
-            )
-
-        cursor = None
-        models = []
-
-        while True:
-            rpc = self._run_sync(
-                self._rpc(
-                    "model/list",
-                    wire.ModelListParams(
-                        cursor=cursor,
-                        includeHidden=include_hidden or None,
-                        limit=limit,
-                    ),
-                    timeout=RPC_TIMEOUT,
-                )
-            )
-            if not rpc["ok"]:
-                return rpc
-
-            payload = rpc["result"] or {}
-            models.extend(payload.get("data") or [])
-            cursor = payload.get("nextCursor")
-            if not cursor:
-                break
-
-        return ok(data=models)
-
-    def _fetch_provider_models(self, base_url: str, env_key: Optional[str]) -> Result:
-        """GET {base_url}/models against the configured provider directly."""
-        import urllib.error
-        import urllib.request
-
-        url = base_url.rstrip("/") + "/models"
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})
-        if env_key:
-            token = os.environ.get(env_key, "").strip()
-            if token:
-                req.add_header("Authorization", f"Bearer {token}")
-
-        try:
-            with urllib.request.urlopen(req, timeout=PROVIDER_HTTP_TIMEOUT) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-        except (urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
-            return err(f"GET {url}: {exc}")
-
-        raw = payload.get("data") if isinstance(payload, dict) else None
-        if not isinstance(raw, list):
-            return err(f"unexpected /models payload from {url}")
-
-        # Map OpenAI-style {id, object, owned_by} → codex Model-shape entries
-        # so /codex models renders the same way as the model/list path.
-        normalized = []
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            mid = (item.get("id") or "").strip()
-            if not mid:
-                continue
-            normalized.append({
-                "id": mid,
-                "model": mid,
-                "displayName": item.get("display_name") or "",
-                "isDefault": False,
-            })
-        return ok(data=normalized)
+        return list_models_for(
+            self._provider, self._run_sync, self._rpc,
+            include_hidden=include_hidden, limit=limit,
+        )
 
     def remove_task(self, task_id: str) -> Result:
         started = self.ensure_started()
