@@ -20,7 +20,7 @@ from typing import Any, Callable, Coroutine, Dict, Optional, TYPE_CHECKING
 from . import wire
 
 if TYPE_CHECKING:
-    from .bridge import _PendingThread, _PendingInput, TaskTarget
+    from .state import _PendingThread, _PendingInput, TaskTarget
 
 logger = logging.getLogger(__name__)
 
@@ -404,7 +404,7 @@ class MessageHandler:
         self, task_id: str, rpc_id: Any, command: str,
         reason: str, target: Optional["TaskTarget"], approval_type: str,
     ) -> None:
-        from .bridge import _PendingApproval, _PendingElicitation
+        from .state import _PendingApproval, _PendingElicitation
         cls = _PendingElicitation if approval_type == "elicitation" else _PendingApproval
         self._pending_approvals[task_id] = cls(
             rpc_id=rpc_id,
@@ -419,7 +419,7 @@ class MessageHandler:
     # ------------------------------------------------------------------
 
     async def _handle_user_input_request(self, params: Any, rpc_id: Any) -> None:
-        from .bridge import _PendingInput
+        from .state import _PendingInput
 
         thread_id = getattr(params, "threadId", "")
         questions = getattr(params, "questions", None) or []

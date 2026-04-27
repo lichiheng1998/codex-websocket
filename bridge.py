@@ -29,13 +29,21 @@ import socket
 import subprocess
 import threading
 import time
-from dataclasses import dataclass
 from typing import Any, Dict, Optional, Union
 
 from pydantic import BaseModel
 
 from . import wire
 from .handlers import MessageHandler
+from .state import (
+    Result,
+    TaskTarget,
+    _PendingApproval,
+    _PendingInput,
+    _PendingThread,
+    err,
+    ok,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,17 +90,6 @@ def _default_collaboration_mode(model: str) -> "wire.CollaborationMode":
         mode=wire.ModeKind("default"),
         settings=wire.CollaborationSettings(model=model),
     )
-
-
-Result = Dict[str, Any]
-
-
-def ok(**data: Any) -> Result:
-    return {"ok": True, **data}
-
-
-def err(message: str) -> Result:
-    return {"ok": False, "error": message}
 
 
 # ── Sandbox policy shapes (Codex wire format). ─────────────────────────────
@@ -146,60 +143,6 @@ def _get_session_context() -> "tuple[str, TaskTarget]":
         thread_id=get_session_env("HERMES_SESSION_THREAD_ID", ""),
     )
     return session_key, target
-
-
-@dataclass
-class TaskTarget:
-    platform: str = ""
-    chat_id: str = ""
-    thread_id: str = ""
-
-
-@dataclass
-class _PendingThread:
-    thread_id: str
-    task_id: str
-    session_key: str
-    cwd: str
-    sandbox_policy: str
-    approval_policy: str = DEFAULT_APPROVAL_POLICY
-    target: Optional[TaskTarget] = None
-
-
-@dataclass
-class _PendingInput:
-    task_id: str
-    rpc_id: Any
-    questions: list
-
-
-@dataclass
-class _PendingApproval:
-    """Server→client approval/elicitation request awaiting a user verdict.
-
-    The wire shape of the response depends on what kind of request it was;
-    each subclass renders its own payload in ``to_response_payload`` so
-    ``resolve_approval`` doesn't carry a method-typed switch.
-    """
-
-    rpc_id: Any
-    task_id: str
-    command: str
-    reason: str
-    target: Optional[TaskTarget]
-
-    def to_response_payload(self, decision: str) -> Dict[str, Any]:
-        # commandExecution / fileChange / permissions all use the same shape.
-        return {"decision": decision}
-
-
-@dataclass
-class _PendingElicitation(_PendingApproval):
-    """MCP elicitation: server expects an MCP-spec accept/decline action."""
-
-    def to_response_payload(self, decision: str) -> Dict[str, Any]:
-        action = "accept" if decision == "accept" else "decline"
-        return {"action": action, "content": None}
 
 
 class CodexBridge:
