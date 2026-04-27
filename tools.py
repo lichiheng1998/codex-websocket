@@ -6,12 +6,8 @@ import json
 import os
 from typing import Any
 
-from .bridge import (
-    CodexBridge,
-    DEFAULT_APPROVAL_POLICY,
-    DEFAULT_SANDBOX_POLICY,
-    _get_session_context,
-)
+from .bridge import CodexBridge, _get_session_context
+from .policies import DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX_POLICY
 
 
 def _error(msg: str) -> str:
