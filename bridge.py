@@ -42,9 +42,23 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL = "gpt-5"
 DEFAULT_APPROVAL_POLICY = "never"
 DEFAULT_SANDBOX_POLICY = "workspace-write"
+
+# Wait for the bridge's asyncio loop thread to enter run_forever().
+LOOP_READY_TIMEOUT = 5.0
+# Each socket-probe attempt while waiting for the spawned codex app-server
+# port to open (we retry until STARTUP_TIMEOUT elapses).
+PORT_PROBE_TIMEOUT = 0.5
+# Cap for the whole spawn → connect → initialize → first-sync chain.
 STARTUP_TIMEOUT = 15.0
-TURN_TIMEOUT = 1800
-APPROVAL_TIMEOUT = 300
+# Standard JSON-RPC request timeout (config/read, model/list, thread/*, etc.).
+RPC_TIMEOUT = 10.0
+# Used when scheduling a fast coroutine onto the loop or doing local-only
+# work (kicking off _drive_*, _ws_send for an approval reply).
+SHORT_RPC_TIMEOUT = 5.0
+# Closing the websocket and waiting for the codex subprocess to exit.
+SHUTDOWN_TIMEOUT = 3.0
+# Direct GET to the configured provider's /models endpoint.
+PROVIDER_HTTP_TIMEOUT = 5.0
 
 
 def _plan_collaboration_mode(model: str) -> "wire.CollaborationMode":
@@ -252,7 +266,7 @@ class CodexBridge:
             target=_run, name="codex-ws-bridge-loop", daemon=True,
         )
         self.loop_thread.start()
-        loop_ready.wait(timeout=5.0)
+        loop_ready.wait(timeout=LOOP_READY_TIMEOUT)
 
     def _spawn_server(self) -> Result:
         try:
@@ -278,7 +292,7 @@ class CodexBridge:
                     f"see {log_path}"
                 )
             try:
-                with socket.create_connection(("127.0.0.1", self.port), timeout=0.5):
+                with socket.create_connection(("127.0.0.1", self.port), timeout=PORT_PROBE_TIMEOUT):
                     return ok()
             except OSError:
                 time.sleep(0.2)
@@ -325,7 +339,7 @@ class CodexBridge:
         `model = ...` explicitly (e.g. plain OpenAI provider).
         """
         cfg_rpc = await self._rpc(
-            "config/read", wire.ConfigReadParams(), timeout=10.0,
+            "config/read", wire.ConfigReadParams(), timeout=RPC_TIMEOUT,
         )
         if cfg_rpc["ok"]:
             config = (cfg_rpc["result"] or {}).get("config") or {}
@@ -346,7 +360,7 @@ class CodexBridge:
             rpc = await self._rpc(
                 "model/list",
                 wire.ModelListParams(cursor=cursor, includeHidden=True),
-                timeout=10.0,
+                timeout=RPC_TIMEOUT,
             )
             if not rpc["ok"]:
                 return rpc
@@ -367,12 +381,12 @@ class CodexBridge:
 
     def shutdown(self) -> None:
         if self.loop and self.loop.is_running():
-            self._run_sync(self._close_ws(), timeout=3.0)  # ignore Result — teardown path
+            self._run_sync(self._close_ws(), timeout=SHUTDOWN_TIMEOUT)  # ignore Result — teardown path
             self.loop.call_soon_threadsafe(self.loop.stop)
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             try:
-                self.proc.wait(timeout=3.0)
+                self.proc.wait(timeout=SHUTDOWN_TIMEOUT)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
         self._ready.clear()
@@ -543,7 +557,7 @@ class CodexBridge:
                 base_instructions=base_instructions,
             ))
 
-        boot = self._run_sync(_boot(), timeout=5.0)
+        boot = self._run_sync(_boot(), timeout=SHORT_RPC_TIMEOUT)
         if not boot["ok"]:
             return boot
         return ok(task_id=task_id, model=self._default_model)
@@ -639,13 +653,13 @@ class CodexBridge:
         if task_id in self._pending_inputs:
             return self._run_sync(
                 self._handler.submit_input_answers(task_id, [message]),
-                timeout=5.0,
+                timeout=SHORT_RPC_TIMEOUT,
             )
 
         async def _boot() -> None:
             asyncio.create_task(self._drive_reply(task_id, message))
 
-        boot = self._run_sync(_boot(), timeout=5.0)
+        boot = self._run_sync(_boot(), timeout=SHORT_RPC_TIMEOUT)
         if not boot["ok"]:
             return boot
         return ok(task_id=task_id)
@@ -747,7 +761,7 @@ class CodexBridge:
 
         send = self._run_sync(
             self._ws_send(json.dumps({"jsonrpc": "2.0", "id": pending.rpc_id, "result": payload})),
-            timeout=5.0,
+            timeout=SHORT_RPC_TIMEOUT,
         )
         if not send["ok"]:
             return send
@@ -759,7 +773,7 @@ class CodexBridge:
         if not started["ok"]:
             return started
 
-        rpc = self._run_sync(self._rpc("thread/list", wire.ThreadListParams(), timeout=10.0))
+        rpc = self._run_sync(self._rpc("thread/list", wire.ThreadListParams(), timeout=RPC_TIMEOUT))
         if not rpc["ok"]:
             return rpc
         server_data = rpc["result"] or {}
@@ -805,7 +819,7 @@ class CodexBridge:
                         includeHidden=include_hidden or None,
                         limit=limit,
                     ),
-                    timeout=10.0,
+                    timeout=RPC_TIMEOUT,
                 )
             )
             if not rpc["ok"]:
@@ -832,7 +846,7 @@ class CodexBridge:
                 req.add_header("Authorization", f"Bearer {token}")
 
         try:
-            with urllib.request.urlopen(req, timeout=5.0) as resp:
+            with urllib.request.urlopen(req, timeout=PROVIDER_HTTP_TIMEOUT) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
         except (urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
             return err(f"GET {url}: {exc}")
@@ -868,7 +882,7 @@ class CodexBridge:
             return err(f"unknown task/thread id {task_id!r}")
 
         archived = self._run_sync(
-            self._rpc("thread/archive", wire.ThreadArchiveParams(threadId=thread_id), timeout=10.0),
+            self._rpc("thread/archive", wire.ThreadArchiveParams(threadId=thread_id), timeout=RPC_TIMEOUT),
         )
         if not archived["ok"]:
             return archived
@@ -905,7 +919,7 @@ class CodexBridge:
             if not thread_id:
                 continue
             archived = self._run_sync(
-                self._rpc("thread/archive", wire.ThreadArchiveParams(threadId=thread_id), timeout=10.0),
+                self._rpc("thread/archive", wire.ThreadArchiveParams(threadId=thread_id), timeout=RPC_TIMEOUT),
             )
             if archived["ok"]:
                 removed += 1
@@ -945,7 +959,7 @@ class CodexBridge:
                       message="thread already tracked")
 
         read = self._run_sync(
-            self._rpc("thread/read", wire.ThreadReadParams(threadId=thread_id), timeout=10.0),
+            self._rpc("thread/read", wire.ThreadReadParams(threadId=thread_id), timeout=RPC_TIMEOUT),
         )
         if not read["ok"]:
             return err(f"thread {thread_id!r} not found: {read['error']}")
@@ -958,7 +972,7 @@ class CodexBridge:
         status = thread_obj.get("status") or {}
         if status.get("type") == "notLoaded":
             resumed = self._run_sync(
-                self._rpc("thread/resume", wire.ThreadResumeParams(threadId=thread_id), timeout=10.0),
+                self._rpc("thread/resume", wire.ThreadResumeParams(threadId=thread_id), timeout=RPC_TIMEOUT),
             )
             if not resumed["ok"]:
                 return err(f"thread/resume failed: {resumed['error']}")
