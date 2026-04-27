@@ -276,55 +276,57 @@ class MessageHandler:
     # /codex approve|deny to call resolve_approval() on the bridge.
     # ------------------------------------------------------------------
 
-    async def _handle_command_approval(self, params: Any, rpc_id: Any) -> None:
+    def _approval_meta(self, params: Any) -> tuple[Optional[str], str, Any]:
+        """Resolve the (target, task_id, reason) triple from approval params.
+
+        thread_id may live under threadId or (legacy) conversationId; pt may be
+        missing entirely if the thread was archived between request and notify.
+        """
         thread_id = getattr(params, "threadId", None) or getattr(params, "conversationId", None)
         pt = self._threads.get(thread_id) if thread_id else None
+        target = pt.target if pt else None
+        task_id = pt.task_id if pt else "?"
+        return target, task_id, pt
+
+    @staticmethod
+    def _approval_footer(task_id: str, *, accept_label: str = "Approve", decline_label: str = "Deny") -> str:
+        return (
+            f"{accept_label}: `/codex approve {task_id}`\n"
+            f"{decline_label}: `/codex deny {task_id}`"
+        )
+
+    async def _handle_command_approval(self, params: Any, rpc_id: Any) -> None:
+        target, task_id, _ = self._approval_meta(params)
         reason = (getattr(params, "reason", "") or "").strip() or "Codex approval"
         command = getattr(params, "command", None) or getattr(params, "commandText", None) or ""
         if isinstance(command, list):
             command = " ".join(str(x) for x in command)
-        cmd_preview = (str(command) or "(codex command)")[:MAX_APPROVAL_CMD_PREVIEW]
+        cmd_str = str(command) or "(codex command)"
+        cmd_preview = cmd_str[:MAX_APPROVAL_CMD_PREVIEW]
 
-        target = pt.target if pt else None
-        task_id = pt.task_id if pt else "?"
-        notify_text = (
-            f"⚠️ Codex task `{task_id}` requests to run a command:\n"
-            f"```\n{cmd_preview}\n```\n"
-            f"Reason: {reason}\n\n"
-            f"Approve: `/codex approve {task_id}`\n"
-            f"Deny: `/codex deny {task_id}`"
+        await self._stash_and_notify(
+            task_id, rpc_id, target, cmd_str, reason, "command",
+            heading=f"⚠️ Codex task `{task_id}` requests to run a command:",
+            body=f"```\n{cmd_preview}\n```",
         )
-        self._stash_approval(task_id, rpc_id, str(command) or "(codex command)", reason, target, "command")
-        await self._notify(target, notify_text)
 
     async def _handle_file_change_approval(self, params: Any, rpc_id: Any) -> None:
         # fileChange approvals share the "command" response shape in our bridge
         # — we just render the change set differently.
-        thread_id = getattr(params, "threadId", None)
-        pt = self._threads.get(thread_id) if thread_id else None
+        target, task_id, _ = self._approval_meta(params)
         reason = (getattr(params, "reason", "") or "").strip() or "Codex file change"
-        target = pt.target if pt else None
-        task_id = pt.task_id if pt else "?"
-
         change = getattr(params, "fileChange", None)
         preview = str(change)[:MAX_APPROVAL_CMD_PREVIEW] if change else "(file change)"
 
-        notify_text = (
-            f"⚠️ Codex task `{task_id}` requests file changes:\n"
-            f"```\n{preview}\n```\n"
-            f"Reason: {reason}\n\n"
-            f"Approve: `/codex approve {task_id}`\n"
-            f"Deny: `/codex deny {task_id}`"
+        await self._stash_and_notify(
+            task_id, rpc_id, target, preview, reason, "command",
+            heading=f"⚠️ Codex task `{task_id}` requests file changes:",
+            body=f"```\n{preview}\n```",
         )
-        self._stash_approval(task_id, rpc_id, preview, reason, target, "command")
-        await self._notify(target, notify_text)
 
     async def _handle_permissions_approval(self, params: Any, rpc_id: Any) -> None:
-        thread_id = getattr(params, "threadId", None)
-        pt = self._threads.get(thread_id) if thread_id else None
+        target, task_id, _ = self._approval_meta(params)
         reason = (getattr(params, "reason", "") or "").strip() or "Codex permissions"
-        target = pt.target if pt else None
-        task_id = pt.task_id if pt else "?"
 
         perms = getattr(params, "permissions", None)
         fs = getattr(perms, "fileSystem", None) if perms else None
@@ -337,52 +339,66 @@ class MessageHandler:
             parts.append("Network access")
         preview = "\n".join(parts) or "(no details)"
 
-        notify_text = (
-            f"⚠️ Codex task `{task_id}` requests permissions:\n{preview}\n"
-            f"Reason: {reason}\n\n"
-            f"Approve: `/codex approve {task_id}`\n"
-            f"Deny: `/codex deny {task_id}`"
+        await self._stash_and_notify(
+            task_id, rpc_id, target, preview, reason, "permissions",
+            heading=f"⚠️ Codex task `{task_id}` requests permissions:",
+            body=preview,
         )
-        self._stash_approval(task_id, rpc_id, preview, reason, target, "permissions")
-        await self._notify(target, notify_text)
 
     async def _handle_elicitation_request(self, params: Any, rpc_id: Any) -> None:
         inner = params.root if hasattr(params, "root") else params
-        thread_id = getattr(inner, "threadId", None)
-        pt = self._threads.get(thread_id) if thread_id else None
+        target, task_id, _ = self._approval_meta(inner)
         server_name = getattr(inner, "serverName", None) or "MCP server"
-        target = pt.target if pt else None
-        task_id = pt.task_id if pt else "?"
-
         elicitation = getattr(inner, "elicitation", None)
         mode = getattr(getattr(elicitation, "mode", None), "value", "form") if elicitation else "form"
         elicit_msg = getattr(elicitation, "message", "") if elicitation else ""
 
         if mode == "url":
             url = getattr(elicitation, "url", "") or ""
-            notify_text = (
-                f"🔗 `{task_id}` MCP `{server_name}` needs you to visit a link:\n{url}\n"
-                f"{elicit_msg}\n\n"
-                f"When done: `/codex approve {task_id}`\n"
-                f"Cancel: `/codex deny {task_id}`"
-            )
+            heading = f"🔗 `{task_id}` MCP `{server_name}` needs you to visit a link:"
+            body = f"{url}\n{elicit_msg}"
+            footer_labels = ("When done", "Cancel")
         else:
             schema = getattr(elicitation, "requestedSchema", None) if elicitation else None
             schema_json = json.dumps(
                 schema.model_dump(mode="json") if hasattr(schema, "model_dump") else (schema or {}),
                 ensure_ascii=False,
             )[:MAX_ELICITATION_SCHEMA_PREVIEW]
-            notify_text = (
-                f"❓ `{task_id}` MCP `{server_name}` requests input:\n{elicit_msg}\n"
-                f"Schema: `{schema_json}`\n\n"
-                f"Accept: `/codex approve {task_id}`\n"
-                f"Decline: `/codex deny {task_id}`"
-            )
+            heading = f"❓ `{task_id}` MCP `{server_name}` requests input:"
+            body = f"{elicit_msg}\nSchema: `{schema_json}`"
+            footer_labels = ("Accept", "Decline")
 
-        self._stash_approval(
-            task_id, rpc_id, f"MCP elicitation: {server_name}", elicit_msg, target, "elicitation",
+        await self._stash_and_notify(
+            task_id, rpc_id, target,
+            f"MCP elicitation: {server_name}", elicit_msg, "elicitation",
+            heading=heading, body=body, footer_labels=footer_labels,
+            include_reason=False,
         )
-        await self._notify(target, notify_text)
+
+    async def _stash_and_notify(
+        self,
+        task_id: str,
+        rpc_id: Any,
+        target: Optional["TaskTarget"],
+        command: str,
+        reason: str,
+        approval_type: str,
+        *,
+        heading: str,
+        body: str,
+        footer_labels: tuple[str, str] = ("Approve", "Deny"),
+        include_reason: bool = True,
+    ) -> None:
+        """Common path for every server→client approval/elicitation request."""
+        sections = [heading, body]
+        if include_reason:
+            sections.append(f"Reason: {reason}")
+        sections.append("")  # blank line before footer
+        sections.append(self._approval_footer(
+            task_id, accept_label=footer_labels[0], decline_label=footer_labels[1],
+        ))
+        self._stash_approval(task_id, rpc_id, command, reason, target, approval_type)
+        await self._notify(target, "\n".join(sections))
 
     def _stash_approval(
         self, task_id: str, rpc_id: Any, command: str,

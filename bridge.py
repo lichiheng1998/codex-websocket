@@ -548,6 +548,32 @@ class CodexBridge:
             return boot
         return ok(task_id=task_id, model=self._default_model)
 
+    def _build_turn_start(
+        self,
+        *,
+        thread_id: str,
+        text: str,
+        cwd: str,
+        sandbox_policy: str,
+        approval_policy: str,
+    ) -> "wire.TurnStartParams":
+        """Render a TurnStartParams using the bridge's current default model
+        and plan-mode setting. Used by both initial turns and replies so the
+        two paths don't drift."""
+        model = self._default_model
+        return wire.TurnStartParams(
+            threadId=thread_id,
+            input=[{"type": "text", "text": text}],
+            model=model,
+            approvalPolicy=approval_policy,
+            sandboxPolicy=_prepare_sandbox(sandbox_policy, cwd),
+            collaborationMode=(
+                _plan_collaboration_mode(model)
+                if self._plan_enabled
+                else _default_collaboration_mode(model)
+            ),
+        )
+
     async def _drive_task(
         self,
         *,
@@ -562,12 +588,6 @@ class CodexBridge:
     ) -> None:
         """Fire-and-forget — failures go to _report_failure, no return value."""
         model = self._default_model
-        sandbox = _prepare_sandbox(sandbox_policy, cwd)
-        collab = (
-            _plan_collaboration_mode(model)
-            if self._plan_enabled
-            else _default_collaboration_mode(model)
-        )
 
         thread_rpc = await self._rpc(
             "thread/start",
@@ -597,13 +617,9 @@ class CodexBridge:
 
         turn_rpc = await self._rpc(
             "turn/start",
-            wire.TurnStartParams(
-                threadId=thread_id,
-                input=[{"type": "text", "text": prompt}],
-                model=model,
-                approvalPolicy=approval_policy,
-                sandboxPolicy=sandbox,
-                collaborationMode=collab,
+            self._build_turn_start(
+                thread_id=thread_id, text=prompt, cwd=cwd,
+                sandbox_policy=sandbox_policy, approval_policy=approval_policy,
             ),
         )
         if not turn_rpc["ok"]:
@@ -645,23 +661,11 @@ class CodexBridge:
             await self._report_failure(None, task_id, "reply failed", "thread missing for task")
             return
 
-        model = self._default_model
-        sandbox = _prepare_sandbox(pt.sandbox_policy, pt.cwd)
-        collab = (
-            _plan_collaboration_mode(model)
-            if self._plan_enabled
-            else _default_collaboration_mode(model)
-        )
-
         rpc = await self._rpc(
             "turn/start",
-            wire.TurnStartParams(
-                threadId=thread_id,
-                input=[{"type": "text", "text": message}],
-                model=model,
-                approvalPolicy=pt.approval_policy,
-                sandboxPolicy=sandbox,
-                collaborationMode=collab,
+            self._build_turn_start(
+                thread_id=thread_id, text=message, cwd=pt.cwd,
+                sandbox_policy=pt.sandbox_policy, approval_policy=pt.approval_policy,
             ),
         )
         if not rpc["ok"]:
@@ -686,24 +690,30 @@ class CodexBridge:
     def get_default_model(self) -> str:
         return self._default_model
 
+    def known_model_ids(self, *, include_hidden: bool = True) -> Result:
+        """Flat set of model identifiers from list_models, considering both
+        the `id` and `model` fields each entry may carry."""
+        listed = self.list_models(include_hidden=include_hidden)
+        if not listed["ok"]:
+            return listed
+        ids: set[str] = set()
+        for item in listed.get("data") or []:
+            if not isinstance(item, dict):
+                continue
+            for key in ("id", "model"):
+                value = str(item.get(key) or "").strip()
+                if value:
+                    ids.add(value)
+        return ok(ids=ids)
+
     def set_default_model(self, model: str) -> Result:
         normalized = (model or "").strip()
         if not normalized:
             return err("model id is required")
 
-        listed = self.list_models(include_hidden=True)
-        if listed["ok"]:
-            models = listed.get("data") or []
-            available = {
-                str(item.get("id") or "").strip()
-                for item in models
-                if isinstance(item, dict)
-            } | {
-                str(item.get("model") or "").strip()
-                for item in models
-                if isinstance(item, dict)
-            }
-            available.discard("")
+        known = self.known_model_ids()
+        if known["ok"]:
+            available = known["ids"]
             if available and normalized not in available:
                 logger.warning(
                     "codex bridge: model %r not in provider list; setting anyway",
@@ -712,7 +722,7 @@ class CodexBridge:
         else:
             logger.warning(
                 "codex bridge: list_models failed (%s); setting %r without validation",
-                listed.get("error"), normalized,
+                known.get("error"), normalized,
             )
 
         self._default_model = normalized
