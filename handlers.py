@@ -404,14 +404,14 @@ class MessageHandler:
         self, task_id: str, rpc_id: Any, command: str,
         reason: str, target: Optional["TaskTarget"], approval_type: str,
     ) -> None:
-        from .bridge import _PendingApproval
-        self._pending_approvals[task_id] = _PendingApproval(
+        from .bridge import _PendingApproval, _PendingElicitation
+        cls = _PendingElicitation if approval_type == "elicitation" else _PendingApproval
+        self._pending_approvals[task_id] = cls(
             rpc_id=rpc_id,
             task_id=task_id,
             command=command,
             reason=reason,
             target=target,
-            approval_type=approval_type,
         )
 
     # ------------------------------------------------------------------

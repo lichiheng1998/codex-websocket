@@ -176,12 +176,31 @@ class _PendingInput:
 
 @dataclass
 class _PendingApproval:
+    """Server→client approval/elicitation request awaiting a user verdict.
+
+    The wire shape of the response depends on what kind of request it was;
+    each subclass renders its own payload in ``to_response_payload`` so
+    ``resolve_approval`` doesn't carry a method-typed switch.
+    """
+
     rpc_id: Any
     task_id: str
     command: str
     reason: str
     target: Optional[TaskTarget]
-    approval_type: str = "command"  # "command", "permissions", "elicitation"
+
+    def to_response_payload(self, decision: str) -> Dict[str, Any]:
+        # commandExecution / fileChange / permissions all use the same shape.
+        return {"decision": decision}
+
+
+@dataclass
+class _PendingElicitation(_PendingApproval):
+    """MCP elicitation: server expects an MCP-spec accept/decline action."""
+
+    def to_response_payload(self, decision: str) -> Dict[str, Any]:
+        action = "accept" if decision == "accept" else "decline"
+        return {"action": action, "content": None}
 
 
 class CodexBridge:
@@ -753,14 +772,12 @@ class CodexBridge:
         if pending is None:
             return err(f"no pending approval for task `{task_id}`")
 
-        if pending.approval_type == "elicitation":
-            action = "accept" if decision == "accept" else "decline"
-            payload = {"action": action, "content": None}
-        else:
-            payload = {"decision": decision}
-
         send = self._run_sync(
-            self._ws_send(json.dumps({"jsonrpc": "2.0", "id": pending.rpc_id, "result": payload})),
+            self._ws_send(json.dumps({
+                "jsonrpc": "2.0",
+                "id": pending.rpc_id,
+                "result": pending.to_response_payload(decision),
+            })),
             timeout=SHORT_RPC_TIMEOUT,
         )
         if not send["ok"]:
