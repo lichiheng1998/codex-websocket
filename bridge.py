@@ -74,7 +74,14 @@ class CodexBridge:
     _instance: Optional["CodexBridge"] = None
     _instance_lock = threading.Lock()
 
-    def __init__(self) -> None:
+    def __init__(self, *, ws_url: Optional[str] = None) -> None:
+        """Construct a bridge instance.
+
+        ``ws_url`` is a test-only injection point: when provided, the
+        bridge skips spawning a ``codex app-server`` subprocess and
+        connects to the given WebSocket URL instead. Production callers
+        omit it and let the bridge spawn its own server.
+        """
         self.proc: Optional[subprocess.Popen] = None
         self.port: Optional[int] = None
         self.ws = None
@@ -97,6 +104,7 @@ class CodexBridge:
         # the provider's own /v1/models endpoint instead of codex's bundled
         # OpenAI catalog. Empty triple until the first successful sync.
         self._provider: ProviderInfo = ProviderInfo()
+        self._injected_ws_url: Optional[str] = ws_url
 
     @classmethod
     def instance(cls) -> "CodexBridge":
@@ -153,6 +161,14 @@ class CodexBridge:
         loop_ready.wait(timeout=LOOP_READY_TIMEOUT)
 
     def _spawn_server(self) -> Result:
+        if self._injected_ws_url:
+            from urllib.parse import urlparse
+            parsed = urlparse(self._injected_ws_url)
+            if parsed.port is None:
+                return err(f"injected ws_url missing port: {self._injected_ws_url}")
+            self.port = parsed.port
+            return ok()
+
         try:
             self.port = pick_free_port()
             cmd = ["codex", "app-server", "--listen", f"ws://127.0.0.1:{self.port}"]
