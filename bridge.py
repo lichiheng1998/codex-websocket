@@ -147,7 +147,6 @@ class _PendingThread:
     task_id: str
     session_key: str
     cwd: str
-    model: str
     sandbox_policy: str
     approval_policy: str = DEFAULT_APPROVAL_POLICY
     target: Optional[TaskTarget] = None
@@ -523,7 +522,6 @@ class CodexBridge:
         *,
         cwd: str,
         prompt: str,
-        model: Optional[str] = None,
         approval_policy: str = DEFAULT_APPROVAL_POLICY,
         sandbox_policy: str = DEFAULT_SANDBOX_POLICY,
         session_key: str = "",
@@ -534,13 +532,12 @@ class CodexBridge:
         start = self.ensure_started()
         if not start["ok"]:
             return start
-        model = (model or self._default_model).strip()
 
         task_id = _new_task_id()
 
         async def _boot() -> None:
             asyncio.create_task(self._drive_task(
-                task_id=task_id, cwd=cwd, prompt=prompt, model=model,
+                task_id=task_id, cwd=cwd, prompt=prompt,
                 approval_policy=approval_policy, sandbox_policy=sandbox_policy,
                 session_key=session_key, target=target,
                 base_instructions=base_instructions,
@@ -549,7 +546,7 @@ class CodexBridge:
         boot = self._run_sync(_boot(), timeout=5.0)
         if not boot["ok"]:
             return boot
-        return ok(task_id=task_id, model=model)
+        return ok(task_id=task_id, model=self._default_model)
 
     async def _drive_task(
         self,
@@ -557,7 +554,6 @@ class CodexBridge:
         task_id: str,
         cwd: str,
         prompt: str,
-        model: str,
         approval_policy: str,
         sandbox_policy: str,
         session_key: str,
@@ -565,6 +561,7 @@ class CodexBridge:
         base_instructions: Optional[str],
     ) -> None:
         """Fire-and-forget — failures go to _report_failure, no return value."""
+        model = self._default_model
         sandbox = _prepare_sandbox(sandbox_policy, cwd)
         collab = (
             _plan_collaboration_mode(model)
@@ -588,7 +585,7 @@ class CodexBridge:
         self._task_map[task_id] = thread_id
         self._threads[thread_id] = _PendingThread(
             thread_id=thread_id, task_id=task_id, session_key=session_key,
-            cwd=cwd, model=model, sandbox_policy=sandbox_policy,
+            cwd=cwd, sandbox_policy=sandbox_policy,
             approval_policy=approval_policy, target=target,
         )
 
@@ -630,20 +627,26 @@ class CodexBridge:
             )
 
         async def _boot() -> None:
-            asyncio.create_task(self._drive_reply(task_id, thread_id, message))
+            asyncio.create_task(self._drive_reply(task_id, message))
 
         boot = self._run_sync(_boot(), timeout=5.0)
         if not boot["ok"]:
             return boot
         return ok(task_id=task_id)
 
-    async def _drive_reply(self, task_id: str, thread_id: str, message: str) -> None:
+    async def _drive_reply(self, task_id: str, message: str) -> None:
+        thread_id = self._task_map.get(task_id)
+        if not thread_id:
+            await self._report_failure(None, task_id, "reply failed", "task not found")
+            return
+
         pt = self._threads.get(thread_id)
-        sandbox_policy = pt.sandbox_policy if pt else DEFAULT_SANDBOX_POLICY
-        approval_policy = pt.approval_policy if pt else DEFAULT_APPROVAL_POLICY
-        cwd = pt.cwd if pt else ""
-        model = pt.model if pt else DEFAULT_MODEL
-        sandbox = _prepare_sandbox(sandbox_policy, cwd)
+        if not pt:
+            await self._report_failure(None, task_id, "reply failed", "thread missing for task")
+            return
+
+        model = self._default_model
+        sandbox = _prepare_sandbox(pt.sandbox_policy, pt.cwd)
         collab = (
             _plan_collaboration_mode(model)
             if self._plan_enabled
@@ -656,14 +659,13 @@ class CodexBridge:
                 threadId=thread_id,
                 input=[{"type": "text", "text": message}],
                 model=model,
-                approvalPolicy=approval_policy,
+                approvalPolicy=pt.approval_policy,
                 sandboxPolicy=sandbox,
                 collaborationMode=collab,
             ),
         )
         if not rpc["ok"]:
-            target = pt.target if pt else None
-            await self._report_failure(target, task_id, "reply failed", rpc["error"])
+            await self._report_failure(pt.target, task_id, "reply failed", rpc["error"])
 
     def set_plan_mode(self, enabled: bool) -> Result:
         """Toggle plan collaboration mode for all subsequent turns on every thread."""
@@ -910,7 +912,6 @@ class CodexBridge:
         *,
         target: Optional[TaskTarget] = None,
         session_key: str = "",
-        model: Optional[str] = None,
         sandbox_policy: str = DEFAULT_SANDBOX_POLICY,
         approval_policy: str = DEFAULT_APPROVAL_POLICY,
     ) -> Result:
@@ -918,7 +919,7 @@ class CodexBridge:
 
         The Codex server does not echo prior-turn policies on ``thread/read``
         (they're per-turn overrides), so the caller must supply whatever
-        ``model`` / ``sandbox_policy`` / ``approval_policy`` should apply to
+        ``sandbox_policy`` / ``approval_policy`` should apply to
         subsequent replies. Omit to fall back to plugin defaults.
 
         Plan collaboration mode is **not** per-task — it's a session-wide
@@ -927,7 +928,6 @@ class CodexBridge:
         started = self.ensure_started()
         if not started["ok"]:
             return started
-        model = (model or self._default_model).strip()
 
         if thread_id in self._threads:
             existing = self._threads[thread_id]
@@ -957,10 +957,10 @@ class CodexBridge:
         self._task_map[task_id] = thread_id
         self._threads[thread_id] = _PendingThread(
             thread_id=thread_id, task_id=task_id, session_key=session_key,
-            cwd=cwd, model=model, sandbox_policy=sandbox_policy,
+            cwd=cwd, sandbox_policy=sandbox_policy,
             approval_policy=approval_policy, target=target,
         )
-        return ok(task_id=task_id, thread_id=thread_id, model=model)
+        return ok(task_id=task_id, thread_id=thread_id, model=self._default_model)
 
 
 # ==================================================================

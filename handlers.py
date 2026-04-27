@@ -137,8 +137,6 @@ class MessageHandler:
                 return
 
             case "item/completed":
-                if not self._is_verbose():
-                    return
                 pt = self._threads.get(params.threadId)
                 if pt is not None:
                     asyncio.create_task(self._safe(self._on_item_completed(pt, params)))
@@ -168,6 +166,10 @@ class MessageHandler:
         """``params`` is ItemCompletedNotification with ``item: ThreadItem``."""
         item = params.item.root  # unwrap the ThreadItem union
         item_type = getattr(getattr(item, "type", None), "value", None) or getattr(item, "type", "")
+
+        # agentMessage (final reply) is always sent; other items need verbose on.
+        if item_type != "agentMessage" and not self._is_verbose():
+            return
 
         match item_type:
             case "agentMessage":

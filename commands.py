@@ -148,6 +148,9 @@ def _cmd_models(bridge: CodexBridge) -> str:
 
 
 def _cmd_model(bridge: CodexBridge, model_id: Optional[str]) -> str:
+    started = bridge.ensure_started()
+    if not started.get("ok"):
+        return f"Failed: {started.get('error')}"
     if not model_id:
         return f"Default model is `{bridge.get_default_model()}`."
 
