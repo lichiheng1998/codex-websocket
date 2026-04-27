@@ -35,6 +35,7 @@ from pydantic import BaseModel
 
 from . import wire
 from .handlers import MessageHandler
+from .notify import notify_user, report_failure
 from .policies import (
     DEFAULT_APPROVAL_POLICY,
     DEFAULT_MODEL,
@@ -200,7 +201,7 @@ class CodexBridge:
             pending_approvals=self._pending_approvals,
             task_map=self._task_map,
             ws_send=self._ws_send,
-            notify=self._notify,
+            notify=notify_user,
             is_verbose=lambda: self._verbose_enabled,
         )
         asyncio.create_task(self._reader_loop())
@@ -374,50 +375,6 @@ class CodexBridge:
     # Notify — best-effort, always swallows errors (user-visible side-effect).
     # ==================================================================
 
-    async def _notify(self, target: Optional[TaskTarget], message: str) -> None:
-        if target is None or not target.platform or not target.chat_id:
-            logger.info("codex notify (no target): %s", message[:200])
-            return
-        try:
-            from gateway.config import load_gateway_config, Platform
-            from tools.send_message_tool import _send_to_platform
-
-            platform_map = {
-                "telegram": Platform.TELEGRAM, "discord": Platform.DISCORD,
-                "slack": Platform.SLACK, "whatsapp": Platform.WHATSAPP,
-                "signal": Platform.SIGNAL, "bluebubbles": Platform.BLUEBUBBLES,
-                "qqbot": Platform.QQBOT, "matrix": Platform.MATRIX,
-                "mattermost": Platform.MATTERMOST,
-                "homeassistant": Platform.HOMEASSISTANT,
-                "dingtalk": Platform.DINGTALK, "feishu": Platform.FEISHU,
-                "wecom": Platform.WECOM, "weixin": Platform.WEIXIN,
-                "email": Platform.EMAIL, "sms": Platform.SMS,
-            }
-            platform = platform_map.get(target.platform.lower())
-            if platform is None:
-                logger.warning("codex notify: unknown platform %r", target.platform)
-                return
-
-            cfg = load_gateway_config()
-            pconfig = cfg.platforms.get(platform)
-            if pconfig is None:
-                logger.warning("codex notify: platform %s not configured", platform)
-                return
-
-            await _send_to_platform(
-                platform, pconfig, target.chat_id, message,
-                thread_id=target.thread_id or None,
-            )
-        except Exception as exc:
-            logger.warning("codex notify failed: %s", exc)
-
-    async def _report_failure(
-        self, target: Optional[TaskTarget], task_id: str, stage: str, detail: str,
-    ) -> None:
-        """Fire-and-forget error reporter for background tasks."""
-        logger.warning("codex task %s failed at %s: %s", task_id, stage, detail)
-        await self._notify(target, f"❌ Codex task `{task_id}` {stage}: {detail}")
-
     # ==================================================================
     # Public API — all compose Result dicts from lower layers.
     # ==================================================================
@@ -499,12 +456,12 @@ class CodexBridge:
             wire.ThreadStartParams(cwd=cwd, model=model, baseInstructions=base_instructions),
         )
         if not thread_rpc["ok"]:
-            await self._report_failure(target, task_id, "thread/start failed", thread_rpc["error"])
+            await report_failure(target, task_id, "thread/start failed", thread_rpc["error"])
             return
 
         thread_id = _extract_thread_id(thread_rpc["result"])
         if not thread_id:
-            await self._report_failure(target, task_id, "thread/start", "no thread id in response")
+            await report_failure(target, task_id, "thread/start", "no thread id in response")
             return
 
         self._task_map[task_id] = thread_id
@@ -514,7 +471,7 @@ class CodexBridge:
             approval_policy=approval_policy, target=target,
         )
 
-        await self._notify(target, (
+        await notify_user(target, (
             f"🤖 Codex task `{task_id}` started\n"
             f"cwd: `{cwd}`\nmodel: `{model}`"
             + ("\nmode: `plan`" if self._plan_enabled else "")
@@ -530,7 +487,7 @@ class CodexBridge:
         if not turn_rpc["ok"]:
             self._task_map.pop(task_id, None)
             self._threads.pop(thread_id, None)
-            await self._report_failure(target, task_id, "turn/start failed", turn_rpc["error"])
+            await report_failure(target, task_id, "turn/start failed", turn_rpc["error"])
 
     def send_reply(self, task_id: str, message: str) -> Result:
         started = self.ensure_started()
@@ -558,12 +515,12 @@ class CodexBridge:
     async def _drive_reply(self, task_id: str, message: str) -> None:
         thread_id = self._task_map.get(task_id)
         if not thread_id:
-            await self._report_failure(None, task_id, "reply failed", "task not found")
+            await report_failure(None, task_id, "reply failed", "task not found")
             return
 
         pt = self._threads.get(thread_id)
         if not pt:
-            await self._report_failure(None, task_id, "reply failed", "thread missing for task")
+            await report_failure(None, task_id, "reply failed", "thread missing for task")
             return
 
         rpc = await self._rpc(
@@ -574,7 +531,7 @@ class CodexBridge:
             ),
         )
         if not rpc["ok"]:
-            await self._report_failure(pt.target, task_id, "reply failed", rpc["error"])
+            await report_failure(pt.target, task_id, "reply failed", rpc["error"])
 
     def set_plan_mode(self, enabled: bool) -> Result:
         """Toggle plan collaboration mode for all subsequent turns on every thread."""
