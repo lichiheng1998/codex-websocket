@@ -29,7 +29,7 @@ import socket
 import subprocess
 import threading
 import time
-from typing import Any, Dict, Optional, Union
+from typing import Dict, Optional, Union
 
 from pydantic import BaseModel
 
@@ -60,20 +60,9 @@ from .state import (
     err,
     ok,
 )
+from .utils import extract_thread_id, new_task_id, pick_free_port
 
 logger = logging.getLogger(__name__)
-
-
-def _get_session_context() -> "tuple[str, TaskTarget]":
-    from tools.approval import get_current_session_key
-    from gateway.session_context import get_session_env
-    session_key = get_current_session_key()
-    target = TaskTarget(
-        platform=get_session_env("HERMES_SESSION_PLATFORM", ""),
-        chat_id=get_session_env("HERMES_SESSION_CHAT_ID", ""),
-        thread_id=get_session_env("HERMES_SESSION_THREAD_ID", ""),
-    )
-    return session_key, target
 
 
 class CodexBridge:
@@ -162,7 +151,7 @@ class CodexBridge:
 
     def _spawn_server(self) -> Result:
         try:
-            self.port = _pick_free_port()
+            self.port = pick_free_port()
             cmd = ["codex", "app-server", "--listen", f"ws://127.0.0.1:{self.port}"]
             logger.info("Starting codex app-server on port %d", self.port)
             log_path = os.path.expanduser("~/.hermes/logs/codex-app-server.log")
@@ -395,7 +384,7 @@ class CodexBridge:
         if not start["ok"]:
             return start
 
-        task_id = _new_task_id()
+        task_id = new_task_id()
 
         async def _boot() -> None:
             asyncio.create_task(self._drive_task(
@@ -459,7 +448,7 @@ class CodexBridge:
             await report_failure(target, task_id, "thread/start failed", thread_rpc["error"])
             return
 
-        thread_id = _extract_thread_id(thread_rpc["result"])
+        thread_id = extract_thread_id(thread_rpc["result"])
         if not thread_id:
             await report_failure(target, task_id, "thread/start", "no thread id in response")
             return
@@ -823,7 +812,7 @@ class CodexBridge:
             if not resumed["ok"]:
                 return err(f"thread/resume failed: {resumed['error']}")
 
-        task_id = _new_task_id()
+        task_id = new_task_id()
         self._task_map[task_id] = thread_id
         self._threads[thread_id] = _PendingThread(
             thread_id=thread_id, task_id=task_id, session_key=session_key,
@@ -833,34 +822,3 @@ class CodexBridge:
         return ok(task_id=task_id, thread_id=thread_id, model=self._default_model)
 
 
-# ==================================================================
-# Module-level helpers
-# ==================================================================
-
-def _extract_thread_id(obj: Any) -> str:
-    if not isinstance(obj, dict):
-        return ""
-    for key in ("threadId", "conversationId", "thread_id"):
-        val = obj.get(key)
-        if isinstance(val, str) and val:
-            return val
-    thread = obj.get("thread")
-    if isinstance(thread, dict):
-        tid = thread.get("id") or thread.get("threadId")
-        if isinstance(tid, str) and tid:
-            return tid
-    tid = obj.get("id")
-    if isinstance(tid, str) and len(tid) >= 8 and "-" in tid:
-        return tid
-    return ""
-
-
-def _new_task_id() -> str:
-    import secrets
-    return secrets.token_hex(4)
-
-
-def _pick_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]

@@ -6,8 +6,9 @@ import json
 import os
 from typing import Any
 
-from .bridge import CodexBridge, _get_session_context
+from .bridge import CodexBridge
 from .policies import DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX_POLICY
+from .utils import get_session_context
 
 
 def _error(msg: str) -> str:
@@ -29,7 +30,7 @@ def codex_task(args: dict, **kwargs: Any) -> str:
         return _error("prompt is required")
 
     try:
-        session_key, target = _get_session_context()
+        session_key, target = get_session_context()
     except (ImportError, AttributeError) as exc:
         return _error(f"hermes runtime unavailable: {exc}")
 
@@ -71,7 +72,7 @@ def codex_revive(args: dict, **kwargs: Any) -> str:
     approval_policy = args.get("approval_policy", DEFAULT_APPROVAL_POLICY)
 
     try:
-        session_key, target = _get_session_context()
+        session_key, target = get_session_context()
     except (ImportError, AttributeError) as exc:
         return _error(f"hermes runtime unavailable: {exc}")
 
