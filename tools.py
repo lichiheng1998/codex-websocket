@@ -6,9 +6,9 @@ import json
 import os
 from typing import Any
 
-from .bridge import CodexBridge
-from .policies import DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX_POLICY
-from .utils import get_session_context
+from codex_websocket.bridge import CodexBridge
+from codex_websocket.policies import DEFAULT_APPROVAL_POLICY, DEFAULT_SANDBOX_POLICY
+from codex_websocket.utils import get_session_context
 
 
 def _error(msg: str) -> str:

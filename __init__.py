@@ -13,15 +13,15 @@ from __future__ import annotations
 
 from shutil import which
 
-from . import schemas, tools
-from .commands import handle_slash
-
 
 def _codex_available() -> bool:
     return which("codex") is not None
 
 
 def register(ctx) -> None:
+    from codex_websocket import schemas, tools
+    from codex_websocket.commands import handle_slash
+
     ctx.register_tool(
         name="codex_task",
         toolset="codex_bridge",
