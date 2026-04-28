@@ -17,9 +17,14 @@ from shutil import which
 
 # Add src/ to sys.path so `codex_websocket` package resolves after
 # the directory restructure into src/codex_websocket/.
+# Also add plugin root so schemas.py and tools.py are importable as
+# top-level modules.
 _src_dir = os.path.join(os.path.dirname(__file__), "src")
+_root_dir = os.path.dirname(__file__)
 if _src_dir not in sys.path:
     sys.path.insert(0, _src_dir)
+if _root_dir not in sys.path:
+    sys.path.insert(0, _root_dir)
 
 
 def _codex_available() -> bool:
@@ -27,7 +32,8 @@ def _codex_available() -> bool:
 
 
 def register(ctx) -> None:
-    from codex_websocket import schemas, tools
+    from . import schemas
+    from . import tools
     from codex_websocket.commands import handle_slash
 
     ctx.register_tool(
