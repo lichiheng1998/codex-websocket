@@ -42,3 +42,13 @@ def register(ctx) -> None:
         handler=handle_slash,
         description="Reply to or list pending Codex task questions (WS variant)",
     )
+
+    def _on_shutdown(**kwargs):
+        from .codex_websocket.bridge import CodexBridge
+        with CodexBridge._instance_lock:
+            instance = CodexBridge._instance
+            CodexBridge._instance = None
+        if instance is not None:
+            instance.shutdown()
+
+    ctx.register_hook("on_session_finalize", _on_shutdown)

@@ -178,6 +178,7 @@ class CodexBridge:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
             env = os.environ.copy()
             env["RUST_LOG"] = env.get("RUST_LOG", "codex_app_server=debug,codex_core=info")
+            env["NO_COLOR"] = "1"
             self._log_file = open(log_path, "a")
             self.proc = subprocess.Popen(
                 cmd, stdout=subprocess.DEVNULL,
