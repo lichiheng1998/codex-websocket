@@ -143,12 +143,22 @@ pip install websockets pydantic
 | `workspace-write` | ✅ | ✅ | ✅ | 读写 cwd（默认） |
 | `danger-full-access` | ✅ | ✅ | ✅ | 完全访问 |
 
-## 配置
+## 配置（Codex CLI）
 
-插件在 `config.toml` 中的配置项：
+插件读取的是 **Codex CLI 自身的配置文件** `~/.codex/config.toml`，不是 Hermes Agent 的配置。示例：
+
+```toml
+# ~/.codex/config.toml
+model = "gpt-5"
+model_provider = "openai"
+
+[model_providers.litellm]
+base_url = "http://localhost:4001/v1"
+env_key = "LITELLM_API_KEY"
+```
 
 | 键 | 说明 |
-|---|------|
+|---|---|
 | `model` | 默认模型 ID |
 | `model_provider` | 使用哪个 provider（如 `litellm`、`openai`） |
 | `model_providers.<id>.base_url` | Provider 的 API base URL |
