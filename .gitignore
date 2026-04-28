@@ -1,2 +1,12 @@
 __pycache__/
 .codex
+
+# codex-app-server-schema — only the 4 files wire.py imports are tracked
+codex_websocket/codex-app-server-schema/*
+codex_websocket/codex-app-server-schema/v1/
+codex_websocket/codex-app-server-schema/v2/
+!codex_websocket/codex-app-server-schema/__init__.py
+!codex_websocket/codex-app-server-schema/ClientRequest.py
+!codex_websocket/codex-app-server-schema/JSONRPCMessage.py
+!codex_websocket/codex-app-server-schema/ServerNotification.py
+!codex_websocket/codex-app-server-schema/ServerRequest.py
