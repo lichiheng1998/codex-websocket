@@ -209,17 +209,17 @@ class CodexBridge:
         import websockets
         url = f"ws://127.0.0.1:{self.port}"
         self.ws = await websockets.connect(url, max_size=None, ping_interval=20)
+        self._handler = MessageHandler(
+            pending_rpc=self._pending_rpc,
+            threads=self._threads,
+            pending_inputs=self._pending_inputs,
+            pending_approvals=self._pending_approvals,
+            task_map=self._task_map,
+            ws_send=self._ws_send,
+            notify=notify_user,
+            is_verbose=lambda: self._verbose_enabled,
+        )
         try:
-            self._handler = MessageHandler(
-                pending_rpc=self._pending_rpc,
-                threads=self._threads,
-                pending_inputs=self._pending_inputs,
-                pending_approvals=self._pending_approvals,
-                task_map=self._task_map,
-                ws_send=self._ws_send,
-                notify=notify_user,
-                is_verbose=lambda: self._verbose_enabled,
-            )
             asyncio.create_task(self._reader_loop())
             init = await self._rpc(
                 "initialize",
@@ -549,7 +549,7 @@ class CodexBridge:
         total_threads = active_tasks
         if connected:
             try:
-                listed = self.list_tasks()
+                listed = self.list_threads()
                 if listed.get("ok"):
                     total_threads = len(listed.get("data", []))
             except Exception:
@@ -607,17 +607,27 @@ class CodexBridge:
             return send
         return ok(decision=decision)
 
-    def list_tasks(self) -> Result:
-        """Call thread/list on the server. Returns ``{ok, data: [...]}`` on success."""
+    def list_threads(self, *, limit: Optional[int] = None) -> Result:
+        """Call thread/list with pagination. Returns ``{ok, data: [...]}`` on success."""
         started = self.ensure_started()
         if not started["ok"]:
             return started
 
-        rpc = self._run_sync(self._rpc("thread/list", wire.ThreadListParams(), timeout=RPC_TIMEOUT))
-        if not rpc["ok"]:
-            return rpc
-        server_data = rpc["result"] or {}
-        return ok(data=server_data.get("data") or [])
+        all_threads = []
+        cursor: Optional[str] = None
+        while True:
+            rpc = self._run_sync(
+                self._rpc("thread/list", wire.ThreadListParams(cursor=cursor, limit=limit), timeout=RPC_TIMEOUT),
+            )
+            if not rpc["ok"]:
+                return rpc
+            server_data = rpc["result"] or {}
+            page = server_data.get("data") or []
+            all_threads.extend(page)
+            cursor = server_data.get("nextCursor")
+            if not cursor or not page:
+                break
+        return ok(data=all_threads)
 
     def list_models(
         self,
@@ -671,12 +681,12 @@ class CodexBridge:
         if not started["ok"]:
             return {"ok": False, "removed": 0, "errors": [started["error"]]}
 
-        listed = self.list_tasks()
+        listed = self.list_threads()
         if not listed["ok"]:
             return {"ok": False, "removed": 0, "errors": [listed["error"]]}
 
         errors, removed = [], 0
-        for t in listed["data"]:
+        for t in listed["data"] or []:
             thread_id = t.get("id") or ""
             if not thread_id:
                 continue

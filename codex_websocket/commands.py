@@ -176,18 +176,21 @@ def _list_tasks(bridge: CodexBridge) -> str:
 
 def _list_threads(bridge: CodexBridge) -> str:
     try:
-        result = bridge.list_tasks()
+        result = bridge.list_threads()
         threads = (result or {}).get("data", [])
     except Exception as exc:
         return f"Failed to list threads: {exc}"
     if not threads:
         return "No threads on server."
-    lines = ["Codex threads:"]
+    total = len(threads)
+    lines = [f"Codex threads ({total}):"]
     for t in threads[:MAX_TASKS_DISPLAY]:
         tid = t.get("id", "?")
         cwd = t.get("cwd", "?")
         preview = (t.get("preview") or "").replace("\n", " ")[:MAX_PREVIEW_LENGTH]
         lines.append(f"  `{tid}` — `{cwd}` {preview}")
+    if total > MAX_TASKS_DISPLAY:
+        lines.append(f"  … and {total - MAX_TASKS_DISPLAY} more")
     return "\n".join(lines)
 
 
