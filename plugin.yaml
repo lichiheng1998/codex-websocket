@@ -1,23 +1,25 @@
 name: codex-websocket
-version: 1.0.0
+version: 1.1.0
 description: Delegate coding tasks to OpenAI Codex via app-server WebSocket bridge (pydantic-typed)
 provides_tools:
   - codex_task
   - codex_revive
 
-# Python dependencies
+manifest_version: 1
+
+# Environment variables — installer will prompt for unset ones
+requires_env:
+  - name: RUST_LOG
+    description: Log level for codex app-server (optional)
+    secret: false
+
+# Python dependencies (documentational — install manually or via requirements.txt)
 python_dependencies:
   - websockets>=11.0
   - pydantic>=2.0
 
-# System dependencies (must be in PATH)
+# System dependencies (documentational — installer does not auto-check)
 system_dependencies:
   - name: codex
     description: OpenAI Codex CLI
     check_command: codex --version
-
-# Environment variables (optional)
-env_vars:
-  - name: RUST_LOG
-    description: Log level for codex app-server
-    default: codex_app_server=debug,codex_core=info
