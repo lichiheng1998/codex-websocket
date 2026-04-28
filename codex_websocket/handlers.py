@@ -80,11 +80,17 @@ class MessageHandler:
         logger.debug("codex bridge: unparseable frame dropped")
 
     def _resolve_rpc(self, rpc_id: Any, *, result: Any = None, error: Any = None) -> None:
-        # RequestId may be a RootModel wrapping str|int; bridge keys by int.
-        key = rpc_id
-        fut = self._pending_rpc.get(key)
-        if fut is None and isinstance(rpc_id, int):
-            fut = self._pending_rpc.get(str(rpc_id))
+        # Bridge keys pending RPCs by int. The server may echo the id back as
+        # a string — try both directions so neither side's type choice breaks.
+        fut = self._pending_rpc.get(rpc_id)
+        if fut is None:
+            if isinstance(rpc_id, str):
+                try:
+                    fut = self._pending_rpc.get(int(rpc_id))
+                except ValueError:
+                    pass
+            elif isinstance(rpc_id, int):
+                fut = self._pending_rpc.get(str(rpc_id))
         if fut is None or fut.done():
             return
         if error is not None:

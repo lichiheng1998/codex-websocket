@@ -125,7 +125,9 @@ class CodexBridge:
         with self._start_lock:
             if self._ready.is_set():
                 return ok()
-            self._start_loop_thread()
+            loop_result = self._start_loop_thread()
+            if not loop_result["ok"]:
+                return loop_result
 
             spawn = self._spawn_server()
             if not spawn["ok"]:
@@ -144,9 +146,9 @@ class CodexBridge:
             self._ready.set()
             return ok()
 
-    def _start_loop_thread(self) -> None:
+    def _start_loop_thread(self) -> Result:
         if self.loop is not None:
-            return
+            return ok()
         loop_ready = threading.Event()
 
         def _run():
@@ -159,7 +161,9 @@ class CodexBridge:
             target=_run, name="codex-ws-bridge-loop", daemon=True,
         )
         self.loop_thread.start()
-        loop_ready.wait(timeout=LOOP_READY_TIMEOUT)
+        if not loop_ready.wait(timeout=LOOP_READY_TIMEOUT):
+            return err("bridge event loop failed to start within timeout")
+        return ok()
 
     def _spawn_server(self) -> Result:
         if self._injected_ws_url:
@@ -205,29 +209,34 @@ class CodexBridge:
         import websockets
         url = f"ws://127.0.0.1:{self.port}"
         self.ws = await websockets.connect(url, max_size=None, ping_interval=20)
-        self._handler = MessageHandler(
-            pending_rpc=self._pending_rpc,
-            threads=self._threads,
-            pending_inputs=self._pending_inputs,
-            pending_approvals=self._pending_approvals,
-            task_map=self._task_map,
-            ws_send=self._ws_send,
-            notify=notify_user,
-            is_verbose=lambda: self._verbose_enabled,
-        )
-        asyncio.create_task(self._reader_loop())
-        init = await self._rpc(
-            "initialize",
-            wire.InitializeParams(
-                clientInfo={"name": "hermes-codex-ws-bridge", "version": "0.1"},
-                capabilities=wire.InitializeCapabilities(experimentalApi=True),
-            ),
-        )
-        if not init["ok"]:
-            raise RuntimeError(f"initialize failed: {init['error']}")
-        notified = await self._ws_send(json.dumps({"jsonrpc": "2.0", "method": "initialized"}))
-        if not notified["ok"]:
-            raise RuntimeError(f"initialized notification failed: {notified['error']}")
+        try:
+            self._handler = MessageHandler(
+                pending_rpc=self._pending_rpc,
+                threads=self._threads,
+                pending_inputs=self._pending_inputs,
+                pending_approvals=self._pending_approvals,
+                task_map=self._task_map,
+                ws_send=self._ws_send,
+                notify=notify_user,
+                is_verbose=lambda: self._verbose_enabled,
+            )
+            asyncio.create_task(self._reader_loop())
+            init = await self._rpc(
+                "initialize",
+                wire.InitializeParams(
+                    clientInfo={"name": "hermes-codex-ws-bridge", "version": "0.1"},
+                    capabilities=wire.InitializeCapabilities(experimentalApi=True),
+                ),
+            )
+            if not init["ok"]:
+                raise RuntimeError(f"initialize failed: {init['error']}")
+            notified = await self._ws_send(json.dumps({"jsonrpc": "2.0", "method": "initialized"}))
+            if not notified["ok"]:
+                raise RuntimeError(f"initialized notification failed: {notified['error']}")
+        except Exception:
+            await self._close_ws()
+            self.ws = None
+            raise
 
     async def _sync_config_from_server(self) -> Result:
         """Pull effective config + provider triple from the app-server.
