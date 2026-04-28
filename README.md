@@ -210,26 +210,27 @@ codex-websocket/
 ├── tools.py                 # 工具处理函数
 ├── plugin.yaml              # 插件清单（元数据、依赖声明）
 ├── requirements.txt         # Python 依赖
-├── src/
-│   └── codex_websocket/
-│       ├── bridge.py        # CodexBridge 单例 — 生命周期、RPC、任务管理
-│       ├── commands.py      # /codex 斜杠命令处理
-│       ├── handlers.py      # WebSocket 入站帧分发
-│       ├── notify.py        # 用户通知推送（跨平台）
-│       ├── policies.py      # 默认值、超时常量、模式构建器
-│       ├── provider.py      # 模型发现与 provider 管理
-│       ├── state.py         # 数据容器（Result、_Pending*）
-│       ├── utils.py         # 纯工具函数
-│       ├── wire.py          # JSON-RPC 序列化/反序列化
-│       └── codex-app-server-schema/  # pydantic wire 模型（150+）
+├── codex_websocket/
+│   ├── bridge.py            # CodexBridge 单例 — 生命周期、RPC、任务管理
+│   ├── commands.py          # /codex 斜杠命令处理
+│   ├── handlers.py          # WebSocket 入站帧分发
+│   ├── notify.py            # 用户通知推送（跨平台）
+│   ├── policies.py          # 默认值、超时常量、模式构建器
+│   ├── provider.py          # 模型发现与 provider 管理
+│   ├── state.py             # 数据容器（Result、_Pending*）
+│   ├── utils.py             # 纯工具函数
+│   ├── wire.py              # JSON-RPC 序列化/反序列化
+│   └── codex-app-server-schema/  # pydantic wire 模型（150+）
 └── tests/
-    ├── conftest.py          # 测试夹具
-    ├── fake_codex_server.py # 内存 WebSocket 测试服务器
-    ├── test_bridge_integration.py  # 集成测试
-    ├── test_policies.py     # 策略单元测试
-    ├── test_provider.py     # provider 单元测试
-    ├── test_state.py        # 状态容器单元测试
-    └── test_utils.py        # 工具函数单元测试
+    ├── conftest.py                  # 测试夹具
+    ├── fake_codex_server.py         # 内存 WebSocket 测试服务器
+    ├── test_bridge_integration.py   # 集成测试（握手、任务流、审批）
+    ├── test_bridge_lifecycle.py     # 生命周期边界测试
+    ├── test_policies.py             # 策略单元测试
+    ├── test_provider.py             # provider 单元测试
+    ├── test_rpc_dispatch.py         # RPC id 分发单元测试
+    ├── test_state.py                # 状态容器单元测试
+    └── test_utils.py                # 工具函数单元测试
 ```
 
 ## 运行测试
@@ -240,9 +241,10 @@ pip install pytest pytest-asyncio websockets pydantic
 python -m pytest tests/ -v
 ```
 
-测试使用内存 WebSocket 服务器 `FakeCodexServer` 替代真实子进程，通过 `CodexBridge(ws_url=...)` 注入跳过进程启动。共 65 个测试，覆盖：
+测试使用内存 WebSocket 服务器 `FakeCodexServer` 替代真实子进程，通过 `CodexBridge(ws_url=...)` 注入跳过进程启动。共 75 个测试，覆盖：
 
-- 桥接生命周期（握手、幂等性、配置同步）
+- 桥接生命周期（握手、幂等性、配置同步、loop 启动超时、WebSocket 泄漏）
+- RPC 分发（string/int id 互转、error response 处理）
 - 任务全流程（thread/start → turn/start → 通知）
 - 审批往返（请求 → 暂存 → 用户操作 → 响应）
 - 沙箱策略构建（别名解析、cwd 注入、字典透传）
