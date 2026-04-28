@@ -6,8 +6,6 @@
 
 ```bash
 pip install -r requirements.txt
-# 或
-pip install websockets pydantic
 ```
 
 ### 2. 确保 Codex CLI 已安装
@@ -31,10 +29,27 @@ hermes gateway restart
 
 ## 使用方法
 
-- **通过 LLM**：Hermes 会自动使用 `codex_task` 工具委派编码任务
-- **手动命令**：`/codex` — 查看/管理 Codex 任务
-  - `/codex status` — 查看线程状态
-  - `/codex reply <thread_id> <answer>` — 回复 Codex 提问
+Hermes 会通过 `codex_task` 工具自动委派编码任务。也可以用 `/codex` 命令手动管理：
+
+| 命令 | 说明 |
+|------|------|
+| `/codex` | 列出本 session 的任务（同 `list`） |
+| `/codex list` | 列出本 session 的任务 |
+| `/codex list --threads` | 列出服务器上所有线程 |
+| `/codex status` | 显示 bridge 连接状态、任务数、当前模型 |
+| `/codex models` | 列出可用模型 |
+| `/codex model` | 显示当前默认模型 |
+| `/codex model <model_id>` | 设置默认模型 |
+| `/codex reply <task_id> <message>` | 向任务发送后续消息 |
+| `/codex approve <task_id>` | 批准待审批的命令 |
+| `/codex deny <task_id>` | 拒绝待审批的命令 |
+| `/codex archive <task_id>` | 归档指定任务线程 |
+| `/codex archive all` | 归档本 session 所有任务 |
+| `/codex archive allthreads` | 归档服务器上所有线程 |
+| `/codex plan on\|off` | 开启/关闭 plan 协作模式 |
+| `/codex verbose on\|off` | 开启/关闭详细通知（显示每个 item 完成情况） |
+
+也可通过 `codex_revive` 工具恢复上一个 session 的历史线程。
 
 ## 环境变量
 
