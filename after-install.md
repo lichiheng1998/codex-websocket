@@ -2,13 +2,7 @@
 
 ## Next steps
 
-### 1. Install Python dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 2. Ensure Codex CLI is installed
+### 1. Ensure Codex CLI is installed
 
 ```bash
 codex --version
@@ -16,7 +10,7 @@ codex --version
 
 If not installed, see [OpenAI Codex CLI](https://github.com/openai/codex).
 
-### 3. Configure Codex (optional)
+### 2. Configure Codex (optional)
 
 Codex reads `~/.codex/config.toml` for model, approval policy, and other settings. For models that don't support the OpenAI Responses API, use LiteLLM as a compatibility bridge. When using LiteLLM with newer versions of Codex, disable unsupported features:
 
@@ -27,7 +21,7 @@ browser_use = false
 computer_use = false
 ```
 
-### 4. Enable the plugin
+### 3. Enable the plugin
 
 ```bash
 hermes plugins enable codex-websocket

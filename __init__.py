@@ -14,30 +14,11 @@ from __future__ import annotations
 from shutil import which
 
 
-def _check_dependencies() -> None:
-    missing = []
-    try:
-        import websockets  # noqa: F401
-    except ImportError:
-        missing.append("websockets")
-    try:
-        import pydantic  # noqa: F401
-    except ImportError:
-        missing.append("pydantic")
-    if missing:
-        raise ImportError(
-            f"codex-websocket plugin missing dependencies: {', '.join(missing)}. "
-            f"Run: pip install {' '.join(missing)}"
-        )
-
-
 def _codex_available() -> bool:
     return which("codex") is not None
 
 
 def register(ctx) -> None:
-    _check_dependencies()
-
     from . import schemas
     from . import tools
     from .codex_websocket.commands import handle_slash
